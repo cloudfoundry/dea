@@ -100,6 +100,8 @@ module DEA
 
       @runtimes = config['runtimes']
 
+      @tier = config['tier']
+
       @local_ip     = VCAP.local_ip(config['local_route'])
       @max_memory   = config['max_memory'] # in MB
       @multi_tenant = config['multi_tenant']
@@ -284,7 +286,7 @@ module DEA
 
     def send_heartbeat
       return if @droplets.empty? || @shutting_down
-      heartbeat = {:droplets => [], :dea => VCAP::Component.uuid }
+      heartbeat = {:droplets => [], :dea => VCAP::Component.uuid, :tier => @tier }
       @droplets.each_value do |instances|
         instances.each_value do |instance|
           heartbeat[:droplets] << generate_heartbeat(instance)
@@ -304,16 +306,23 @@ module DEA
     def send_advertise
       return if !space_available? || @shutting_down
 
-      advertise_message = { :id => VCAP::Component.uuid,
-                             :available_memory => @max_memory - @reserved_mem,
-                             :runtimes => @runtimes.keys}
+      advertise_message = {
+        :id => VCAP::Component.uuid,
+        :available_memory => @max_memory - @reserved_mem,
+        :runtimes => @runtimes.keys,
+        :tier => @tier
+      }
 
       NATS.publish('dea.advertise', advertise_message.to_json)
     end
 
 
     def send_single_heartbeat(instance)
-      heartbeat = {:droplets => [generate_heartbeat(instance)], :dea => VCAP::Component.uuid }
+      heartbeat = {
+        :droplets => [generate_heartbeat(instance)],
+        :dea => VCAP::Component.uuid,
+        :tier => @tier
+      }
       NATS.publish('dea.heartbeat', heartbeat.to_json)
     end
 
@@ -392,6 +401,12 @@ module DEA
           return
         end
 
+        #Ensure app's tier matches dea's tier
+        unless message_json['tier'] == @tier
+          @logger.debug("Ignoring request, #{message_json['tier']} tier doesn't match dea tier #{@tier}.")
+          return
+        end
+        
         # Pull resource limits and make sure we can accomodate
         limits = message_json['limits']
         mem_needed = limits['mem']
