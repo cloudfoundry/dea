@@ -150,6 +150,137 @@ describe 'DEA Agent' do
     end
   end
 
+  describe '#bind_local_runtime' do
+    it 'should replace VCAP_LOCAL_RUNTIME in startup' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtimes, {'ruby18'=>{'executable'=>'/usr/bin/ruby', 'enabled'=>true}})
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      apps_dir = create_apps_dir(UNIT_TESTS_DIR)
+      File.directory?(apps_dir).should be_true
+      inst_dir = File.join(apps_dir, 'test_instance_dir')
+      FileUtils.mkdir(inst_dir)
+      File.directory?(inst_dir).should be_true
+      startup = File.join(inst_dir, 'startup')
+      File.open(startup, 'w') { |f| f.write("%VCAP_LOCAL_RUNTIME% foo.rb") }
+      agent.bind_local_runtime(inst_dir, {'name'=>'ruby18'})
+      startup_contents = File.read(startup)
+      startup_contents.should == "/usr/bin/ruby foo.rb"
+    end
+
+    it 'should do nothing if startup file does not exist' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtimes, {'ruby18'=>{'executable'=>'/usr/bin/ruby', 'enabled'=>true}})
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      apps_dir = create_apps_dir(UNIT_TESTS_DIR)
+      File.directory?(apps_dir).should be_true
+      inst_dir = File.join(apps_dir, 'test_instance_dir')
+      FileUtils.mkdir(inst_dir)
+      File.directory?(inst_dir).should be_true
+      agent.bind_local_runtime(inst_dir, {'name'=>'ruby18'})
+    end
+
+    it 'should do nothing if runtime is not supported' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['java'])
+      apps_dir = create_apps_dir(UNIT_TESTS_DIR)
+      File.directory?(apps_dir).should be_true
+      inst_dir = File.join(apps_dir, 'test_instance_dir')
+      FileUtils.mkdir(inst_dir)
+      File.directory?(inst_dir).should be_true
+      startup = File.join(inst_dir, 'startup')
+      File.open(startup, 'w') { |f| f.write("%VCAP_LOCAL_RUNTIME% foo.rb") }
+      agent.bind_local_runtime(inst_dir, {'name'=>'ruby18'})
+      startup_contents = File.read(startup)
+      startup_contents.should == "%VCAP_LOCAL_RUNTIME% foo.rb"
+    end
+
+    it 'should do nothing if instance dir does not exist' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtimes, {'ruby18'=>{'executable'=>'/usr/bin/ruby', 'enabled'=>true}})
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.bind_local_runtime('fake_dir', {'name'=>'ruby18'})
+    end
+  end
+
+  describe '#initialize_runtime' do
+    it 'disables runtime if executable not found' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.initialize_runtime({'name'=>'ruby18','executable'=>'/does/not/exist'})
+      agent.instance_variable_get(:@runtimes).should== {'ruby18'=>{'name'=>'ruby18',
+                                                                   'executable'=>'/does/not/exist',
+                                                                    'enabled'=>false}}
+    end
+    it 'disables runtime if unable to run version check' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.initialize_runtime({'name'=>'ruby18','executable'=> ENV["VCAP_TEST_DEA_RUBY18"] || '/usr/bin/ruby1.8',
+                                'version_flag'=>'-foo'})
+      agent.instance_variable_get(:@runtimes)['ruby18']['enabled'].should== false
+    end
+    it 'disables runtime if version_output is missing' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.initialize_runtime({'name'=>'ruby18','executable'=> ENV["VCAP_TEST_DEA_RUBY18"] || '/usr/bin/ruby1.8',
+                                'version_flag'=>"-e 'puts RUBY_VERSION'"})
+      agent.instance_variable_get(:@runtimes)['ruby18']['enabled'].should== false
+    end
+
+    it 'disables runtime if version mismatch' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.initialize_runtime({'name'=>'ruby18','executable'=> ENV["VCAP_TEST_DEA_RUBY18"] || '/usr/bin/ruby1.8',
+                                'version_flag'=>"-e 'puts RUBY_VERSION'", 'version_output'=>'1.9.2'})
+      agent.instance_variable_get(:@runtimes)['ruby18']['enabled'].should== false
+    end
+
+    it 'disables runtime if additional checks fail' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.initialize_runtime({'name'=>'ruby18','executable'=> ENV["VCAP_TEST_DEA_RUBY18"] || '/usr/bin/ruby1.8',
+                                'version_flag'=>"-e 'puts RUBY_VERSION'", 'version_output'=>'1.8.7', 'additional_checks'=>'-foo'})
+      agent.instance_variable_get(:@runtimes)['ruby18']['enabled'].should== false
+    end
+
+    it 'enables runtime if all checks pass' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.initialize_runtime({'name'=>'ruby18','executable'=> ENV["VCAP_TEST_DEA_RUBY18"] || '/usr/bin/ruby1.8',
+                                'version_flag'=>"-e 'puts RUBY_VERSION'", 'version_output'=>'1.8.7'})
+      agent.instance_variable_get(:@runtimes)['ruby18']['enabled'].should== true
+    end
+  end
+
+  describe '#runtime_supported?' do
+    it 'returns false if runtime name not in config' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.runtime_supported?({'name'=>'java'}).should == false
+    end
+
+     it 'returns false if runtime not enabled' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.instance_variable_set(:@runtimes, {'ruby18'=>{'enabled'=> false}})
+      agent.runtime_supported?({'name'=>'ruby18'}).should == false
+    end
+
+    it 'returns true if runtime is enabled' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtime_names, ['ruby18'])
+      agent.instance_variable_set(:@runtimes, {'ruby18'=>{'enabled'=> true}})
+      agent.runtime_supported?({'name'=>'ruby18'}).should == true
+    end
+  end
+
+  describe '#runtime_env' do
+    it 'returns runtime env variables' do
+      agent = make_test_agent
+      agent.instance_variable_set(:@runtimes, {'ruby18'=>{'environment'=> {'PATH'=>'/usr/foo','LD_LIBRARY_PATH'=>'bar'}}})
+      agent.runtime_env('ruby18').sort.should == ['LD_LIBRARY_PATH=bar','PATH=/usr/foo']
+    end
+  end
+
   def create_crashed_app(base_dir)
     apps_dir = create_apps_dir(base_dir)
     File.directory?(apps_dir).should be_true
