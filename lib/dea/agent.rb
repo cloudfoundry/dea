@@ -1350,13 +1350,27 @@ module DEA
 
     def register_instance_with_router(instance, options = {})
       return unless (instance and instance[:uris] and not instance[:uris].empty?)
+      
+      # When visiting app URL, Router will get the resource usage of its instances to make a better choice
+      # vmc stats will not get the res_usage as it does not concern with instance registering.
+      p_usage ={} 
+
+      pid = instance[:pid]      
+            
+      if pid
+        rss, pcpu = `ps -o rss=,pcpu= -p #{pid}`.split
+        p_usage[:mem] = rss.to_i
+        p_usage[:cpu] = pcpu.to_f
+      end
+      
       NATS.publish('router.register', {
                      :dea  => VCAP::Component.uuid,
                      :app  => instance[:droplet_id],
                      :host => @local_ip,
                      :port => instance[:port],
                      :uris => options[:uris] || instance[:uris],
-                     :tags => {:framework => instance[:framework], :runtime => instance[:runtime]}
+                     :tags => {:framework => instance[:framework], :runtime => instance[:runtime]},
+                     :res_usage => {:mem => p_usage[:mem], :cpu => p_usage[:cpu]}
                    }.to_json)
     end
 
