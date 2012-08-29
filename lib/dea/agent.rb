@@ -390,20 +390,20 @@ module DEA
       message_json = JSON.parse(message)
       # Respond with where to find us if we can help.
       if @shutting_down
-        @logger.debug('Ignoring request, shutting down.')
+        @logger.warn('Ignoring request, shutting down.')
       elsif @num_clients >= @max_clients || @reserved_mem > @max_memory
-        @logger.debug('Ignoring request, not enough resources.')
+        @logger.warn('Ignoring request, not enough resources.')
       elsif droplet_fs_usage_threshold_exceeded?
         @logger.warn("Droplet FS has exceeded usage threshold, ignoring request")
       else
         # Check that we properly support the runtime requested
         unless runtime_supported? message_json['runtime']
-          @logger.debug("Ignoring request, #{message_json['runtime']} runtime not supported.")
+          @logger.warn("Ignoring request, #{message_json['runtime']} runtime not supported.")
           return
         end
         #Ensure app's prod flag is set if DEA's prod flag is set
         if @prod && !message_json['prod']
-          @logger.debug("Ignoring request, app_prod=#{message_json['prod']} isn't set, and dea_prod=#{@prod} is.")
+          @logger.warn("Ignoring request, app_prod=#{message_json['prod']} isn't set, and dea_prod=#{@prod} is.")
           return
         end
         # Pull resource limits and make sure we can accomodate
@@ -411,7 +411,7 @@ module DEA
         mem_needed = limits['mem']
         droplet_id = message_json['droplet'].to_i
         if (@reserved_mem + mem_needed > @max_memory)
-          @logger.debug('Ignoring request, not enough resources.')
+          @logger.warn('Ignoring request, not enough resources.')
           return
         end
         delay = calculate_help_taint(droplet_id)
@@ -1415,7 +1415,7 @@ module DEA
         else
           detect_attempts += 1
           if detect_attempts > 300 # 5 minutes
-            @logger.debug('Giving up detecting stop file')
+            @logger.warn('Giving up detecting stop file')
             detect_pid_timer.cancel
             yield nil
           end
@@ -1688,11 +1688,11 @@ module DEA
 
     def runtime_supported?(runtime_name)
       unless runtime_name && runtime = @runtimes[runtime_name]
-        @logger.debug("Ignoring request, no suitable runtimes available for '#{runtime_name}'")
+        @logger.warn("Ignoring request, no suitable runtimes available for '#{runtime_name}'")
         return false
       end
       unless runtime['enabled']
-        @logger.debug("Ignoring request, runtime not enabled for '#{runtime_name}'")
+        @logger.warn("Ignoring request, runtime not enabled for '#{runtime_name}'")
         return false
       end
       true
