@@ -20,8 +20,6 @@ require 'yaml'
 require 'em-http'
 require 'nats/client'
 require 'thin'
-require 'sys/filesystem'
-include Sys
 
 require 'vcap/common'
 require 'vcap/component'
@@ -99,8 +97,6 @@ module DEA
       verify_ruby(@dea_ruby)
 
       @runtimes = config['runtimes']
-
-      @prod = config['prod']
 
       @local_ip     = VCAP.local_ip(config['local_route'])
       @max_memory   = config['max_memory'] # in MB
@@ -286,7 +282,7 @@ module DEA
 
     def send_heartbeat
       return if @droplets.empty? || @shutting_down
-      heartbeat = {:droplets => [], :dea => VCAP::Component.uuid, :prod => @prod }
+      heartbeat = {:droplets => [], :dea => VCAP::Component.uuid }
       @droplets.each_value do |instances|
         instances.each_value do |instance|
           heartbeat[:droplets] << generate_heartbeat(instance)
@@ -306,23 +302,16 @@ module DEA
     def send_advertise
       return if !space_available? || @shutting_down
 
-      advertise_message = {
-        :id => VCAP::Component.uuid,
-        :available_memory => @max_memory - @reserved_mem,
-        :runtimes => @runtimes.keys,
-        :prod => @prod
-      }
+      advertise_message = { :id => VCAP::Component.uuid,
+                             :available_memory => @max_memory - @reserved_mem,
+                             :runtimes => @runtimes.keys}
 
       NATS.publish('dea.advertise', advertise_message.to_json)
     end
 
 
     def send_single_heartbeat(instance)
-      heartbeat = {
-        :droplets => [generate_heartbeat(instance)],
-        :dea => VCAP::Component.uuid,
-        :prod => @prod
-      }
+      heartbeat = {:droplets => [generate_heartbeat(instance)], :dea => VCAP::Component.uuid }
       NATS.publish('dea.heartbeat', heartbeat.to_json)
     end
 
@@ -333,8 +322,7 @@ module DEA
         :instance => instance[:instance_id],
         :index => instance[:instance_index],
         :state => instance[:state],
-        :state_timestamp => instance[:state_timestamp],
-        :cc_partition => instance[:cc_partition]
+        :state_timestamp => instance[:state_timestamp]
       }
     end
 
@@ -390,9 +378,9 @@ module DEA
       message_json = JSON.parse(message)
       # Respond with where to find us if we can help.
       if @shutting_down
-        @logger.warn('Ignoring request, shutting down.')
+        @logger.debug('Ignoring request, shutting down.')
       elsif @num_clients >= @max_clients || @reserved_mem > @max_memory
-        @logger.warn('Ignoring request, not enough resources.')
+        @logger.debug('Ignoring request, not enough resources.')
       elsif droplet_fs_usage_threshold_exceeded?
         @logger.warn("Droplet FS has exceeded usage threshold, ignoring request")
       else
@@ -401,17 +389,13 @@ module DEA
           @logger.debug("Ignoring request, #{message_json['runtime']} runtime not supported.")
           return
         end
-        # Ensure app's prod flag is set if DEA's prod flag is set
-        if @prod && !message_json['prod']
-          @logger.debug("Ignoring request, app_prod=#{message_json['prod']} isn't set, and dea_prod=#{@prod} is.")
-          return
-        end
+
         # Pull resource limits and make sure we can accomodate
         limits = message_json['limits']
         mem_needed = limits['mem']
         droplet_id = message_json['droplet'].to_i
         if (@reserved_mem + mem_needed > @max_memory)
-          @logger.warn('Ignoring request, not enough resources.')
+          @logger.debug('Ignoring request, not enough resources.')
           return
         end
         delay = calculate_help_taint(droplet_id)
@@ -564,7 +548,6 @@ module DEA
       debug = message_json['debug']
       console = message_json['console']
       flapping = message_json['flapping']
-      cc_partition = message_json['cc_partition']
 
       # Limits processing
       mem     = DEFAULT_APP_MEM
@@ -619,8 +602,7 @@ module DEA
         :start => Time.now,
         :state_timestamp => Time.now.to_i,
         :log_id => "(name=%s app_id=%s instance=%s index=%s)" % [name, droplet_id, instance_id, instance_index],
-        :flapping => flapping ? true : false,
-        :cc_partition => cc_partition
+        :flapping => flapping ? true : false
       }
 
       instances = @droplets[droplet_id] || {}
@@ -1371,6 +1353,17 @@ module DEA
                    }.to_json)
     end
 
+    # Update instance resource usage
+    def update_instance_with_router(instance, res_usage)
+      return unless (instance and instance[:uris] and not instance[:uris].empty?)
+      NATS.publish('router.update.droplet', {
+                     :host => @local_ip,
+                     :port => instance[:port],
+                     :uris => instance[:uris],
+                     :res_usage => res_usage
+                   }.to_json)
+    end
+
     def send_exited_notification(instance)
       return if instance[:evacuated]
       exit_message = {
@@ -1379,7 +1372,6 @@ module DEA
         :instance => instance[:instance_id],
         :index => instance[:instance_index],
         :reason => instance[:exit_reason],
-        :cc_partition => instance[:cc_partition],
       }
       exit_message[:crash_timestamp] = instance[:state_timestamp] if instance[:state] == :CRASHED
       exit_message = exit_message.to_json
@@ -1415,7 +1407,7 @@ module DEA
         else
           detect_attempts += 1
           if detect_attempts > 300 # 5 minutes
-            @logger.warn('Giving up detecting stop file')
+            @logger.debug('Giving up detecting stop file')
             detect_pid_timer.cancel
             yield nil
           end
@@ -1632,6 +1624,27 @@ module DEA
 
             # Re-register with router on startup since these are orphaned and may have been dropped.
             register_instance_with_router(instance) if startup_check
+
+            # Update the resource usage of instance to router
+            # res_usage is caculated by cpu and memory usage
+            cpu_usage = cur_usage[:cpu]
+            mem_usage = 0.0
+
+            # In secure mode, the usage will be checked before calculated; if not, we just let out a warning.
+            # TODO: If all the instances are over used, this algorithm doesn't work.
+            if(instance[:mem_quota] != 0)
+              mem_usage = cur_usage[:mem]/instance[:mem_quota]
+              if(mem_usage > 1)
+                @logger.warn("WARN! Memory quota of instance #{instance[:instance_id]} is not enough to run!")
+              end
+            else
+              @logger.fatal("ERROR! Memory quota of instance #{instance[:instance_id]} should not be zero!")
+            end
+
+            res_usage = cpu_usage*0.4 + mem_usage*0.6
+
+            update_instance_with_router(instance, res_usage)
+
           else
             # App *should* no longer be running if we are here
             instance.delete(:pid)
@@ -1792,25 +1805,33 @@ module DEA
     end
 
     def update_droplet_fs_usage(opts={})
-      fs_proc = Proc.new do
-        begin
-          fs = Filesystem.stat(@droplet_dir)
-          [:success, fs]
-        rescue => e
-          [:error, e]
-        end
-      end
+      df_cmd = "df #{@droplet_dir}"
 
-      cont = Proc.new do |status, fs|
-        raise "Failed executing Filesystem.stat for #{@droplet_dir}: #{fs.message}" unless status == :success
-        @droplet_fs_percent_used = Integer((fs.blocks - fs.blocks_free) / fs.blocks * 100)
+      cont = proc do |output, status|
+        raise "Failed executing #{df_cmd}" unless status.success?
+
+        percent_used = parse_df_percent_used(output)
+        raise "Failed parsing df output: #{output}" unless percent_used
+
+        @droplet_fs_percent_used = percent_used
       end
 
       if opts[:blocking]
-        status, fs = fs_proc.call
-        cont.call(status, fs)
+        output = `#{df_cmd}`
+        cont.call(output, $?)
       else
-        EM.defer(fs_proc, cont)
+        EM.system(df_cmd, cont)
+      end
+    end
+
+    def parse_df_percent_used(output)
+      fields = output.strip.split(/\s+/)
+      return nil unless fields.count == 13
+
+      if fields[11] =~ /^(\d+)%$/
+        Integer($1)
+      else
+        nil
       end
     end
 
