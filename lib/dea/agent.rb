@@ -1371,6 +1371,17 @@ module DEA
                    }.to_json)
     end
 
+    # Update instance resource usage
+    def update_instance_with_router(instance, res_usage)
+      return unless (instance and instance[:uris] and not instance[:uris].empty?)
+      NATS.publish('router.update.droplet', {
+                     :host => @local_ip,
+                     :port => instance[:port],
+                     :uris => instance[:uris],
+                     :res_usage => res_usage
+                   }.to_json)
+    end
+
     def send_exited_notification(instance)
       return if instance[:evacuated]
       exit_message = {
@@ -1632,6 +1643,26 @@ module DEA
 
             # Re-register with router on startup since these are orphaned and may have been dropped.
             register_instance_with_router(instance) if startup_check
+
+            # Update the resource usage of instance to router
+            # res_usage is caculated by cpu and memory usage
+            cpu_usage = cur_usage[:cpu]
+            mem_usage = 0.0
+
+            # In secure mode, the usage will be checked before calculated; if not, we just let out a warning.
+            # TODO: If all the instances are over used, this algorithm doesn't work.
+            if(instance[:mem_quota] != 0)
+              mem_usage = cur_usage[:mem]/instance[:mem_quota]
+              if(mem_usage > 1)
+                @logger.warn("WARN! Memory quota of instance #{instance[:instance_id]} is not enough to run!")
+              end
+            else
+              @logger.fatal("ERROR! Memory quota of instance #{instance[:instance_id]} should not be zero!")
+            end
+
+            res_usage = cpu_usage*0.4 + mem_usage*0.6
+
+            update_instance_with_router(instance, res_usage)
           else
             # App *should* no longer be running if we are here
             instance.delete(:pid)
