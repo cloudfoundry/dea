@@ -196,6 +196,12 @@ describe 'DEA Agent' do
       svc['name'].should == 'my-mongo'
       svc['plan'].should == 'D100'
     end
+
+    it 'should add the VCAP_ENVIRONMENT_VERSION to the environment' do
+      agent = make_test_agent
+      env = agent.setup_instance_env(@instance, @app_env, @services)
+      find_env_var(env, "VCAP_ENVIRONMENT_VERSION").should == DEA::Agent::VCAP_ENVIRONMENT_VERSION.to_s
+    end
   end
 
   def create_crashed_app(base_dir)

@@ -39,6 +39,8 @@ module DEA
 
     VERSION = 0.99
 
+    VCAP_ENVIRONMENT_VERSION = 2
+
     # Allow modular security models
     include DEA::Secure
 
@@ -1188,6 +1190,7 @@ module DEA
       env = []
 
       env << "HOME=#{instance[:dir]}"
+      env << "VCAP_ENVIRONMENT_VERSION=#{VCAP_ENVIRONMENT_VERSION}"
       env << "VCAP_APPLICATION='#{create_instance_for_env(instance)}'"
       env << "VCAP_SERVICES='#{create_services_for_env(services)}'"
       env << "VCAP_APP_HOST='#{@local_ip}'"
