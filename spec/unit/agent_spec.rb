@@ -170,17 +170,52 @@ describe 'DEA Agent' do
         :cc_partition => "some_partition"
       }
 
-      @app_env = {
-      }
+      @app_env = []
 
-      @services = {
-      }
+      @services = [{ 'name' => "my-mongo",
+                     'label' => "mongodb-2.0",
+                     'vendor' => "my-mongo",
+                     'version' => "2.0",
+                     'plan' => "D100",
+                     'provider' => "core",
+                     'credentials' => { "a" => "b" }
+      }]
     end
 
     it 'should add the VCAP_ENVIRONMENT_VERSION to the environment' do
       agent = make_test_agent
       env = agent.setup_instance_env(@instance, @app_env, @services)
       find_env_var(env, "VCAP_ENVIRONMENT_VERSION").should == DEA::Agent::VCAP_ENVIRONMENT_VERSION.to_s
+    end
+
+    it 'should export the VCAP_SERVICES to the environment' do
+      agent = make_test_agent
+      env = agent.setup_instance_env(@instance, @app_env, @services)
+      v = find_env_var(env, "VCAP_SERVICES")
+      v.should_not be_nil
+      hash = Yajl::Parser.parse(eval(v))
+      hash.should have_key('mongodb-2.0')
+      svc = hash['mongodb-2.0'].first
+      svc['label'].should == 'mongodb'
+      svc['provider'].should == 'core'
+      svc['version'].should == '2.0'
+      svc['name'].should == 'my-mongo'
+      svc['plan'].should == 'D100'
+    end
+
+    it 'should export the VMC_SERVICES to the environment' do
+      agent = make_test_agent
+      env = agent.setup_instance_env(@instance, @app_env, @services)
+      v = find_env_var(env, "VCAP_SERVICES")
+      v.should_not be_nil
+      hash = Yajl::Parser.parse(eval(v))
+      hash.should have_key('mongodb-2.0')
+      svc = hash['mongodb-2.0'].first
+      svc['label'].should == 'mongodb'
+      svc['provider'].should == 'core'
+      svc['version'].should == '2.0'
+      svc['name'].should == 'my-mongo'
+      svc['plan'].should == 'D100'
     end
   end
 
