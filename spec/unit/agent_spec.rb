@@ -150,6 +150,40 @@ describe 'DEA Agent' do
     end
   end
 
+  describe '#setup_instance_env' do
+    before do
+      @instance = {
+        :droplet_id => "some_droplet_id",
+        :instance_id => "some_instance_id",
+        :instance_index => 9,
+        :name => "some_app_name",
+        :dir => "/some/dir",
+        :uris => ["http://app.apps.com"],
+        :version => "some_version",
+        :mem_quota => 1 * (1024*1024),
+        :disk_quota => 2  * (1024*1024),
+        :fds_quota => 11,
+        :state => :STARTING,
+        :start => Time.now,
+        :state_timestamp => Time.now.to_i,
+        :flapping => false,
+        :cc_partition => "some_partition"
+      }
+
+      @app_env = {
+      }
+
+      @services = {
+      }
+    end
+
+    it 'should add the VCAP_ENVIRONMENT_VERSION to the environment' do
+      agent = make_test_agent
+      env = agent.setup_instance_env(@instance, @app_env, @services)
+      find_env_var(env, "VCAP_ENVIRONMENT_VERSION").should == DEA::Agent::VCAP_ENVIRONMENT_VERSION.to_s
+    end
+  end
+
   def create_crashed_app(base_dir)
     apps_dir = create_apps_dir(base_dir)
     File.directory?(apps_dir).should be_true
@@ -188,5 +222,13 @@ describe 'DEA Agent' do
     }
     config.update(overrides)
     DEA::Agent.new(config)
+  end
+
+  def find_env_var(env, key)
+    env.each do |e|
+      (k, v) = e.split("=", 2)
+      return v if k == key
+    end
+    nil
   end
 end
