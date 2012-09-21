@@ -1252,6 +1252,17 @@ module DEA
         end
       end
       @logger.info("Scheduling shutdown in #{@evacuation_delay} seconds..")
+      if @evacuation_delay > 2
+        # unregister instances from router not to accept new requests.
+        EM.add_timer(@evacuation_delay / 2) do
+          @droplets.each_pair do |id, instances|
+            instances.each_value do |instance|
+              next if instance[:state] == :CRASHED
+              unregister_instance_from_router(instance)
+            end
+          end
+        end
+      end
       @evacuation_delay_timer = EM.add_timer(@evacuation_delay) { shutdown() }
       schedule_snapshot
     end
