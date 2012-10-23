@@ -592,6 +592,9 @@ module DEA
       elsif @reserved_mem + mem > @max_memory || @num_clients >= @max_clients
         @logger.info('Do not have room for this client application')
         return
+      elsif app_env && (!app_env.is_a?(Array) || app_env.count{|env| !env.is_a?(String)} > 0)
+        @logger.error("App_env is not of type Array of Strings. Ingoring dea.start message.")
+        return
       elsif droplet_fs_usage_threshold_exceeded?
         @logger.warn("Droplet FS usage has exceeded the threshold")
         return
