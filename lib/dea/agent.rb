@@ -555,6 +555,10 @@ module DEA
 
       instance_id = VCAP.secure_uuid
 
+      # session is used as router sticky session, which represents the instance.
+      # We concatenate 2 UUIDs to generate the 32 chars long session.
+      session = VCAP.secure_uuid + VCAP.secure_uuid
+
       droplet_id = message_json['droplet'].to_s
       instance_index = message_json['index']
       services = message_json['services']
@@ -611,6 +615,7 @@ module DEA
       instance = {
         :droplet_id => droplet_id,
         :instance_id => instance_id,
+        :session => session,
         :instance_index => instance_index,
         :name => name,
         :dir => instance_dir,
@@ -1360,6 +1365,7 @@ module DEA
       NATS.publish('router.register', {
                      :dea  => VCAP::Component.uuid,
                      :app  => instance[:droplet_id],
+                     :session => instance[:session],
                      :host => @local_ip,
                      :port => instance[:port],
                      :uris => options[:uris] || instance[:uris],
@@ -1372,6 +1378,7 @@ module DEA
       NATS.publish('router.unregister', {
                      :dea  => VCAP::Component.uuid,
                      :app  => instance[:droplet_id],
+                     :session => instance[:session],
                      :host => @local_ip,
                      :port => instance[:port],
                      :uris => options[:uris] || instance[:uris]
