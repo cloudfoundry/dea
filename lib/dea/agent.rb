@@ -112,7 +112,7 @@ module DEA
       @prod = config['prod']
 
       @local_ip     = VCAP.local_ip(config['local_route'])
-      @max_memory   = config['max_memory'] # in MB
+      @max_memory   = config['max_memory'] || 4096 # in MB
       @multi_tenant = config['multi_tenant']
       @max_clients  = @multi_tenant ? DEFAULT_MAX_CLIENTS : 1
       @reserved_mem = 0
